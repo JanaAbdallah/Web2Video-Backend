@@ -76,7 +76,6 @@ async function renderVideo(jobId, scenesWithAudio) {
 
   const executablePath = await chromium.executablePath();
   const chromiumOptions = {
-    executablePath,
     args: chromium.args,
     headless: chromium.headless,
   };
@@ -85,7 +84,8 @@ async function renderVideo(jobId, scenesWithAudio) {
     serveUrl,
     id: 'MainVideo',
     inputProps: { scenes: scenesWithDurations },
-    chromiumOptions
+    chromiumOptions,
+    browserExecutable: executablePath
   });
 
   // Override computed duration with our actual scene total
@@ -100,6 +100,7 @@ async function renderVideo(jobId, scenesWithAudio) {
     outputLocation: outputPath,
     inputProps: { scenes: scenesWithDurations },
     chromiumOptions,
+    browserExecutable: executablePath,
     onProgress: ({ progress }) => {
       process.stdout.write(`\r  Render progress: ${Math.round(progress * 100)}%`);
     },
