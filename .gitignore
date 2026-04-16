@@ -1,0 +1,15 @@
+# Dependency directories
+node_modules/
+
+# Generated outputs
+outputs/
+output/
+
+# Environment Variables
+.env
+.env.local
+.env.production
+.env.development
+
+# OS generated files
+.DS_Store
