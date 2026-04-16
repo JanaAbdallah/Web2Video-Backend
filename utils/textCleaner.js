@@ -1,4 +1,5 @@
 function cleanText(rawText) {
+  const maxChars = Number(process.env.SCRIPT_SOURCE_MAX_CHARS || 6000);
   let cleaned = rawText
     .replace(/\t/g, ' ')
     .replace(/[ ]{2,}/g, ' ')          // collapse spaces
@@ -17,10 +18,9 @@ function cleanText(rawText) {
   ];
   noise.forEach(pattern => { cleaned = cleaned.replace(pattern, ''); });
 
-  // Raised from 4000 → 12000 chars so full-page documents aren't truncated.
-  // Groq's llama-3.3-70b supports a large context window, so this is safe.
-  if (cleaned.length > 12000) {
-    cleaned = cleaned.substring(0, 12000) + '...';
+  // Keep source text bounded so script generation stays fast and within token budgets.
+  if (cleaned.length > maxChars) {
+    cleaned = cleaned.substring(0, maxChars) + '...';
   }
 
   return cleaned;
