@@ -5,11 +5,5 @@ node_modules/
 outputs/
 output/
 
-# Environment Variables
-.env
-.env.local
-.env.production
-.env.development
-
 # OS generated files
 .DS_Store
