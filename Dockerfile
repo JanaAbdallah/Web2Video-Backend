@@ -4,10 +4,18 @@ FROM node:18-bullseye
 RUN apt-get update && apt-get install -y \
     chromium \
     libnss3 \
+    libnspr4 \
     libxss1 \
     libasound2 \
     libatk-bridge2.0-0 \
     libgtk-3-0 \
+    libdrm2 \
+    libgbm1 \
+    libxcb1 \
+    libxcomposite1 \
+    libxrandr2 \
+    libxshmfence1 \
+    libx11-xcb1 \
     fonts-liberation \
     libappindicator3-1 \
     xdg-utils \
