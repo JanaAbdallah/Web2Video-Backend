@@ -7,7 +7,7 @@ const fs = require('fs-extra');
 const generateRouter = require('./routes/generate');
 
 const app = express();
-const PORT = process.env.PORT || 3007;
+const PORT = process.env.PORT || 3008;
 
 // Ensure outputs directory exists
 fs.ensureDirSync(path.join(__dirname, 'outputs'));
