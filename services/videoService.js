@@ -2,6 +2,7 @@ const { bundle } = require('@remotion/bundler');
 const { renderMedia, selectComposition } = require('@remotion/renderer');
 const path = require('path');
 const fs = require('fs-extra');
+const chromium = require('@sparticuz/chromium');
 
 const ENTRY_POINT = path.join(__dirname, '../remotion-src/index.ts');
 
@@ -73,10 +74,18 @@ async function renderVideo(jobId, scenesWithAudio) {
 
   const serveUrl = await getBundleUrl();
 
+  const executablePath = await chromium.executablePath();
+  const chromiumOptions = {
+    executablePath,
+    args: chromium.args,
+    headless: chromium.headless,
+  };
+
   const composition = await selectComposition({
     serveUrl,
     id: 'MainVideo',
     inputProps: { scenes: scenesWithDurations },
+    chromiumOptions
   });
 
   // Override computed duration with our actual scene total
@@ -90,6 +99,7 @@ async function renderVideo(jobId, scenesWithAudio) {
     codec: 'h264',
     outputLocation: outputPath,
     inputProps: { scenes: scenesWithDurations },
+    chromiumOptions,
     onProgress: ({ progress }) => {
       process.stdout.write(`\r  Render progress: ${Math.round(progress * 100)}%`);
     },
