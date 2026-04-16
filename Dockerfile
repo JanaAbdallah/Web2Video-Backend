@@ -36,7 +36,7 @@ RUN npm ci
 COPY . .
 
 # Expose the API port
-EXPOSE 3002
+EXPOSE 3003
 
 # Start the Node.js server
 CMD ["npm", "start"]
