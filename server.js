@@ -23,8 +23,8 @@ app.use('/api/generate', generateRouter);
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
-app.listen(PORT, () => {
-  console.log(`✅ Server running on http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Server bound to 0.0.0.0 and running on port ${PORT}`);
 });
 
 app.get('/', (req, res) => {
