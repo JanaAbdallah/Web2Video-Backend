@@ -23,18 +23,21 @@ async function generateAudioForScene(text, outputPath) {
 
 async function generateAudioForScenes(scenes, jobId) {
   const jobDir = path.join(__dirname, '../outputs', jobId);
-  const audioPaths = [];
-
-  // Use the same port as server.js — default 3008 (was wrongly 3001 before)
   const port = process.env.PORT || 3008;
 
-  for (let i = 0; i < scenes.length; i++) {
-    const filePath = path.join(jobDir, `scene-${i}.mp3`);
-    console.log(`🎙️  Generating audio for scene ${i + 1}/${scenes.length}...`);
-    await generateAudioForScene(scenes[i].text, filePath);
-    // Return as HTTP URL so Remotion's headless browser can fetch it
-    audioPaths.push(`http://localhost:${port}/videos/${jobId}/scene-${i}.mp3`);
-  }
+  // KEY OPTIMISATION: generate all scenes in parallel instead of sequentially.
+  // For 5 scenes this alone saves ~30-60 seconds depending on text length.
+  console.log(`🎙️  Generating audio for ${scenes.length} scenes in parallel...`);
+
+  const audioPaths = await Promise.all(
+    scenes.map(async (scene, i) => {
+      const filePath = path.join(jobDir, `scene-${i}.mp3`);
+      await generateAudioForScene(scene.text, filePath);
+      console.log(`  ✓ Scene ${i + 1}/${scenes.length} audio done`);
+      // Return as HTTP URL so Remotion's headless browser can fetch it
+      return `http://localhost:${port}/videos/${jobId}/scene-${i}.mp3`;
+    })
+  );
 
   return audioPaths;
 }

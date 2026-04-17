@@ -5,6 +5,7 @@ const cors = require('cors');
 const fs = require('fs-extra');
 
 const generateRouter = require('./routes/generate');
+const { warmUp } = require('./services/videoService');
 
 const app = express();
 const PORT = process.env.PORT || 3008;
@@ -24,7 +25,12 @@ app.use('/api/generate', generateRouter);
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ Server bound to 0.0.0.0 and running on port ${PORT}`);
+  console.log(`✅ Server running on port ${PORT}`);
+
+  // KEY OPTIMISATION: pre-warm the Remotion bundle and Chromium executable
+  // in the background right after the server starts — so the FIRST real user
+  // request doesn't have to wait an extra ~30s for cold-start bundling.
+  warmUp();
 });
 
 app.get('/', (req, res) => {
