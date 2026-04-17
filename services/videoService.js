@@ -90,20 +90,31 @@ async function renderVideo(jobId, scenesWithAudio, checkCancelled) {
 
   console.log(`🎬 Rendering ${totalFrames} frames (${totalDurationSeconds.toFixed(1)}s across ${scenesWithDurations.length} scenes) at ${fps} FPS...`);
 
-  await renderMedia({
-    composition,
-    serveUrl,
-    codec: 'h264',
-    concurrency: 1, // Fixes thrashing on low 1-core CPUs
-    outputLocation: outputPath,
-    inputProps: { scenes: scenesWithDurations },
-    chromiumOptions,
-    browserExecutable: executablePath,
-    onProgress: ({ progress }) => {
-      if (checkCancelled && checkCancelled()) throw new Error('Job cancelled by user');
-      process.stdout.write(`\r  Render progress: ${Math.round(progress * 100)}%`);
-    },
-  });
+  try {
+    await renderMedia({
+      composition,
+      serveUrl,
+      codec: 'h264',
+      concurrency: 1, // Fixes thrashing on low 1-core CPUs
+      outputLocation: outputPath,
+      inputProps: { scenes: scenesWithDurations },
+      chromiumOptions,
+      browserExecutable: executablePath,
+      onProgress: ({ progress }) => {
+        if (checkCancelled && checkCancelled()) throw new Error('Cancelled by user');
+        process.stdout.write(`\r  Render progress: ${Math.round(progress * 100)}%`);
+      },
+    });
+  } catch (err) {
+    // If the error is a Remotion ProtocolError caused by us killing Chrome mid-render,
+    // normalize it to the standard cancellation message so generate.js handles it silently.
+    const isTargetClosed = err.message?.includes('Target closed') || err.message?.includes('ProtocolError');
+    const isCancelled = err.message?.includes('Cancelled by user');
+    if (isTargetClosed || isCancelled) {
+      throw new Error('Cancelled by user');
+    }
+    throw err; // re-throw genuine errors
+  }
 
   console.log('\n✅ Video rendered:', outputPath);
   return outputPath;
