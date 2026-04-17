@@ -36,7 +36,7 @@ async function estimateAudioDuration(filePath) {
   }
 }
 
-async function renderVideo(jobId, scenesWithAudio) {
+async function renderVideo(jobId, scenesWithAudio, checkCancelled) {
   const outputPath = path.join(__dirname, '../outputs', jobId, 'video.mp4');
 
   const fps = 24;
@@ -100,6 +100,7 @@ async function renderVideo(jobId, scenesWithAudio) {
     chromiumOptions,
     browserExecutable: executablePath,
     onProgress: ({ progress }) => {
+      if (checkCancelled && checkCancelled()) throw new Error('Job cancelled by user');
       process.stdout.write(`\r  Render progress: ${Math.round(progress * 100)}%`);
     },
   });

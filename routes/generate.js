@@ -39,42 +39,72 @@ router.get('/status/:jobId', (req, res) => {
   res.json(job);
 });
 
+// POST /api/generate/cancel/:jobId — gracefully halt processing
+router.post('/cancel/:jobId', (req, res) => {
+  const jobId = req.params.jobId;
+  if (jobs[jobId]) {
+    jobs[jobId].status = 'cancelled';
+    console.log(`🛑 Job ${jobId} cancellation requested by client.`);
+  }
+  res.json({ success: true });
+});
+
 async function processJob(jobId, rawText) {
   const jobDir = path.join(__dirname, '../outputs', jobId);
-  await fs.ensureDir(jobDir);
-
-  // 1. Clean text
-  jobs[jobId].progress = 'Cleaning page content...';
-  const cleanedText = cleanText(rawText);
-  console.log(`📝 Cleaned text: ${cleanedText.length} chars`);
-
-  // 2. Generate script with LLM
-  jobs[jobId].progress = 'Generating video script with AI...';
-  const script = await generateScript(cleanedText);
-  console.log(`📋 Script: "${script.title}" — ${script.scenes.length} scenes`);
-
-  // 3. Generate voiceover audio for each scene
-  jobs[jobId].progress = 'Generating voiceover audio...';
-  const audioPaths = await generateAudioForScenes(script.scenes, jobId);
-
-  // 4. Attach audio URLs to scenes
-  const scenesWithAudio = script.scenes.map((scene, i) => ({
-    ...scene,
-    audioFile: audioPaths[i],
-  }));
-
-  // 5. Render video with Remotion
-  jobs[jobId].progress = 'Rendering video (this takes 1-3 minutes)...';
-  await renderVideo(jobId, scenesWithAudio);
-
-  // 6. Done!
-  jobs[jobId] = {
-    status: 'complete',
-    title: script.title,
-    videoUrl: `/videos/${jobId}/video.mp4`,
+  
+  const checkCancelled = () => {
+    if (jobs[jobId]?.status === 'cancelled') throw new Error('Cancelled by user');
   };
 
-  console.log(`🎉 Job ${jobId} complete!`);
+  try {
+    await fs.ensureDir(jobDir);
+    checkCancelled();
+
+    // 1. Clean text
+    jobs[jobId].progress = 'Cleaning page content...';
+    const cleanedText = cleanText(rawText);
+    console.log(`📝 Cleaned text: ${cleanedText.length} chars`);
+    checkCancelled();
+
+    // 2. Generate script with LLM
+    jobs[jobId].progress = 'Generating video script with AI...';
+    const script = await generateScript(cleanedText);
+    console.log(`📋 Script: "${script.title}" — ${script.scenes.length} scenes`);
+    checkCancelled();
+
+    // 3. Generate voiceover audio for each scene
+    jobs[jobId].progress = 'Generating voiceover audio...';
+    const audioPaths = await generateAudioForScenes(script.scenes, jobId);
+    checkCancelled();
+
+    // 4. Attach audio URLs to scenes
+    const scenesWithAudio = script.scenes.map((scene, i) => ({
+      ...scene,
+      audioFile: audioPaths[i],
+    }));
+    checkCancelled();
+
+    // 5. Render video with Remotion
+    jobs[jobId].progress = 'Rendering video (this takes 1-3 minutes)...';
+    await renderVideo(jobId, scenesWithAudio, () => jobs[jobId]?.status === 'cancelled');
+    checkCancelled();
+
+    // 6. Done!
+    jobs[jobId] = {
+      status: 'complete',
+      title: script.title,
+      videoUrl: `/videos/${jobId}/video.mp4`,
+    };
+
+    console.log(`🎉 Job ${jobId} complete!`);
+  } catch (err) {
+    if (err.message === 'Cancelled by user' || err.message === 'Job cancelled by user') {
+      console.log(`🛑 Job ${jobId} gracefully aborted to save CPU.`);
+    } else {
+      console.error('❌ Job failed:', err.message);
+      if (jobs[jobId]) jobs[jobId] = { status: 'failed', error: err.message };
+    }
+  }
   
   // 7. Auto-cleanup disk and memory after 15 minutes
   setTimeout(async () => {
