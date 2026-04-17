@@ -16,8 +16,12 @@ fs.ensureDirSync(path.join(__dirname, 'outputs'));
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// Serve generated videos statically
-app.use('/videos', express.static(path.join(__dirname, 'outputs')));
+// CORS headers required — Chrome Extensions cannot stream cross-origin media without them
+app.use('/videos', (req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  next();
+}, express.static(path.join(__dirname, 'outputs')));
 
 // API Routes
 app.use('/api/generate', generateRouter);
