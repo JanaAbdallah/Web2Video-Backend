@@ -1,5 +1,5 @@
 const { bundle } = require('@remotion/bundler');
-const { renderMedia, selectComposition } = require('@remotion/renderer');
+const { renderMedia, selectComposition, makeCancelSignal } = require('@remotion/renderer');
 const path = require('path');
 const fs = require('fs-extra');
 const chromium = require('@sparticuz/chromium');
@@ -90,30 +90,42 @@ async function renderVideo(jobId, scenesWithAudio, checkCancelled) {
 
   console.log(`🎬 Rendering ${totalFrames} frames (${totalDurationSeconds.toFixed(1)}s across ${scenesWithDurations.length} scenes) at ${fps} FPS...`);
 
+  // Set up Remotion's official cancel signal so we can actually stop rendering
+  const { cancelSignal, cancel } = makeCancelSignal();
+
+  // Poll the cancellation flag every 500ms and trigger the official cancel
+  const cancelPoller = setInterval(() => {
+    if (checkCancelled && checkCancelled()) {
+      console.log('\n🛑 Cancel signal fired — stopping Remotion renderer...');
+      cancel();
+      clearInterval(cancelPoller);
+    }
+  }, 500);
+
   try {
     await renderMedia({
       composition,
       serveUrl,
       codec: 'h264',
-      concurrency: 1, // Fixes thrashing on low 1-core CPUs
+      concurrency: 1,
       outputLocation: outputPath,
       inputProps: { scenes: scenesWithDurations },
       chromiumOptions,
       browserExecutable: executablePath,
+      cancelSignal,
       onProgress: ({ progress }) => {
-        if (checkCancelled && checkCancelled()) throw new Error('Cancelled by user');
         process.stdout.write(`\r  Render progress: ${Math.round(progress * 100)}%`);
       },
     });
   } catch (err) {
-    // If the error is a Remotion ProtocolError caused by us killing Chrome mid-render,
-    // normalize it to the standard cancellation message so generate.js handles it silently.
     const isTargetClosed = err.message?.includes('Target closed') || err.message?.includes('ProtocolError');
-    const isCancelled = err.message?.includes('Cancelled by user');
+    const isCancelled = err.message?.includes('Cancelled') || err.message?.includes('cancel');
     if (isTargetClosed || isCancelled) {
       throw new Error('Cancelled by user');
     }
-    throw err; // re-throw genuine errors
+    throw err;
+  } finally {
+    clearInterval(cancelPoller);
   }
 
   console.log('\n✅ Video rendered:', outputPath);
