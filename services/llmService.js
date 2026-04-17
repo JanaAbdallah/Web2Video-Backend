@@ -8,9 +8,9 @@ async function generateScript(cleanedText) {
     messages: [
       {
         role: 'system',
-        content: `You are a video script writer. Given webpage content, create a deep, comprehensive educational video script that covers the document in its entirety. Do NOT skip information and do NOT summarize it as brief highlights. Every concept deserves its own detailed scene.
+        content: `You are a text extraction tool. Given webpage content, you must extract the exact original sentences verbatim to be read aloud in a video. DO NOT explain, summarize, or rewrite the text conversationally. Just copy the most important consecutive sentences exactly as they are written in the source document and break them into scenes.
 
-STRICT RULE: You MUST rely ONLY on the provided text. Do NOT hallucinate, invent, or add ANY outside facts that are not explicitly stated in the source document.
+STRICT RULE: You MUST quote explicitly from the provided text. Do NOT hallucinate, invent, or change any words.
 
 Return ONLY valid raw JSON — no markdown fences, no extra text, nothing else.
 Schema:
