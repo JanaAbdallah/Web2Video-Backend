@@ -39,7 +39,7 @@ async function estimateAudioDuration(filePath) {
 async function renderVideo(jobId, scenesWithAudio) {
   const outputPath = path.join(__dirname, '../outputs', jobId, 'video.mp4');
 
-  const fps = 30;
+  const fps = 24;
 
   // Measure actual audio duration for each scene and inject it
   console.log('🔍 Measuring audio durations...');
@@ -84,15 +84,17 @@ async function renderVideo(jobId, scenesWithAudio) {
     browserExecutable: executablePath
   });
 
-  // Override computed duration with our actual scene total
+  // Override variables specifically to conserve CPU on slow platforms
   composition.durationInFrames = totalFrames;
+  composition.fps = fps;
 
-  console.log(`🎬 Rendering ${totalFrames} frames (${totalDurationSeconds.toFixed(1)}s across ${scenesWithDurations.length} scenes)...`);
+  console.log(`🎬 Rendering ${totalFrames} frames (${totalDurationSeconds.toFixed(1)}s across ${scenesWithDurations.length} scenes) at ${fps} FPS...`);
 
   await renderMedia({
     composition,
     serveUrl,
     codec: 'h264',
+    concurrency: 1, // Fixes thrashing on low 1-core CPUs
     outputLocation: outputPath,
     inputProps: { scenes: scenesWithDurations },
     chromiumOptions,

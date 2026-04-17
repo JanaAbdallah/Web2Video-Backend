@@ -8,7 +8,7 @@ export const Root: React.FC = () => {
       id="MainVideo"
       component={MainVideo}
       durationInFrames={300}   // overridden at render time
-      fps={30}
+      fps={24}
       width={1280}
       height={720}
       defaultProps={{ scenes: [] }}

@@ -37,15 +37,15 @@ Schema:
 Rules:
 - Scene 1 must have visual = "title" (it's the intro card)
 - All other scenes must have visual = "content" and MUST include a "topic" (max 4 words) and a relevant "emoji"
-- Each text should be between 30 and 65 words to provide deep explanations, rather than rapid bullet points — it will be spoken out loud
+- Each text should be between 20 and 40 words to be concise
 - IMPORTANT: Duration must be long enough for the text to be spoken at a natural pace.
   Use this formula: duration = Math.ceil(wordCount / 2.2) + 2
-  Examples: 30 words = 16s, 40 words = 20s, 60 words = 29s
+  Examples: 20 words = 11s, 40 words = 20s
 - Title scene duration: 5 seconds
-- Minimum content scene duration: 12 seconds
+- Minimum content scene duration: 8 seconds
 - Do NOT use symbols like *, #, or bullet points in text
 - Make it educational, conversational, and thorough
-- COVER THE ENTIRE DOCUMENT — use as many scenes as needed (up to 30 scenes)`
+- CRITICAL RULE: DO NOT EXCEED 5 SCENES TOTAL. The final video must be strictly under 90 seconds. Extract only the absolute core concepts.`
       },
       {
         role: 'user',
