@@ -1,13 +1,15 @@
 /**
- * generate.js
+ * generate.js  (OPTIMISED)
  *
- * API routes for video generation jobs.
- *
- * Design decisions:
- * - Jobs are in-memory only (no DB, no disk state beyond the render output).
- * - Jobs auto-cleanup after 15 minutes (video files + memory).
- * - A hard 6-minute render timeout kills any stuck job.
- * - No cross-request state is persisted — every client session is independent.
+ * Key changes vs original:
+ *  1. REMOVED the hard 6-minute timeout that was silently killing renders that
+ *     were close to completion. The render itself has a per-frame timeout in
+ *     videoService.js (30 s/frame) which is the right place to catch hangs.
+ *  2. Progress messages now include elapsed time so the user can see that
+ *     something is actually happening.
+ *  3. Cleanup delay extended to 30 minutes (was 15) so videos don't vanish
+ *     before slow mobile connections finish downloading them.
+ *  4. POST body validated more carefully to give actionable error messages.
  */
 
 const express = require('express');
@@ -24,27 +26,27 @@ const { renderVideo } = require('../services/videoService');
 // In-memory job store
 const jobs = {};
 
-// Hard render timeout: 6 minutes (360 000 ms)
-const RENDER_TIMEOUT_MS = 6 * 60 * 1000;
-
-// Auto-cleanup delay after completion: 15 minutes
-const CLEANUP_DELAY_MS = 15 * 60 * 1000;
+// Auto-cleanup delay after completion: 30 minutes (was 15)
+// Longer window prevents videos vanishing while the user is still watching/downloading.
+const CLEANUP_DELAY_MS = 30 * 60 * 1000;
 
 // ─── POST /api/generate — start a new job ────────────────────────────────────
 
 router.post('/', async (req, res) => {
   const { text } = req.body;
 
-  if (!text || text.trim().length < 50) {
-    return res.status(400).json({ error: 'Not enough text provided (minimum 50 characters)' });
+  if (!text || typeof text !== 'string') {
+    return res.status(400).json({ error: 'Missing "text" field in request body.' });
+  }
+  if (text.trim().length < 50) {
+    return res.status(400).json({ error: 'Not enough text provided (minimum 50 characters).' });
   }
 
   const jobId = uuidv4();
-  jobs[jobId] = { status: 'processing', progress: 'Starting...' };
+  jobs[jobId] = { status: 'processing', progress: 'Starting...', startedAt: Date.now() };
 
   res.json({ jobId });
 
-  // Fire-and-forget async job
   processJob(jobId, text).catch((err) => {
     console.error('❌ Job failed:', err.message);
     if (jobs[jobId] && jobs[jobId].status !== 'cancelled') {
@@ -58,10 +60,20 @@ router.post('/', async (req, res) => {
 router.get('/status/:jobId', (req, res) => {
   const job = jobs[req.params.jobId];
   if (!job) return res.status(404).json({ error: 'Job not found' });
+
+  // Include elapsed seconds in every processing response so the client
+  // can show a live timer and reassure the user something is happening.
+  if (job.status === 'processing' && job.startedAt) {
+    return res.json({
+      ...job,
+      elapsedSeconds: Math.round((Date.now() - job.startedAt) / 1000),
+    });
+  }
+
   res.json(job);
 });
 
-// ─── POST /api/generate/cancel/:jobId — cancel a running job ─────────────────
+// ─── POST /api/generate/cancel/:jobId ────────────────────────────────────────
 
 router.post('/cancel/:jobId', (req, res) => {
   const jobId = req.params.jobId;
@@ -82,31 +94,31 @@ async function processJob(jobId, rawText) {
     if (isCancelled()) throw new Error('Cancelled by user');
   };
 
-  // Set a hard 6-minute timeout to prevent zombie renders
-  const timeoutHandle = setTimeout(() => {
-    if (jobs[jobId] && jobs[jobId].status === 'processing') {
-      console.warn(`⏰ Job ${jobId} timed out after 6 minutes — marking as failed.`);
-      jobs[jobId] = { status: 'failed', error: 'Render timed out after 6 minutes. Try a shorter page.' };
-    }
-  }, RENDER_TIMEOUT_MS);
+  // Helper: update progress with elapsed time stamp
+  const setProgress = (msg) => {
+    if (!jobs[jobId]) return;
+    const elapsed = Math.round((Date.now() - jobs[jobId].startedAt) / 1000);
+    jobs[jobId].progress = `${msg} (${elapsed}s elapsed)`;
+    console.log(`[job ${jobId.slice(0, 8)}] ${msg} — ${elapsed}s`);
+  };
 
   try {
     await fs.ensureDir(jobDir);
     checkCancelled();
 
     // 1. Clean text
-    jobs[jobId].progress = 'Cleaning documentation content...';
+    setProgress('Cleaning documentation content...');
     const cleanedText = cleanText(rawText);
     console.log(`📝 Cleaned text: ${cleanedText.length} chars`);
     checkCancelled();
 
     // 2. Generate script with LLM
-    jobs[jobId].progress = 'Generating video script from documentation...';
+    setProgress('Generating video script from documentation...');
     const script = await generateScript(cleanedText);
     checkCancelled();
 
     // 3. Generate voiceover audio for each scene in parallel
-    jobs[jobId].progress = 'Generating voiceover audio...';
+    setProgress('Generating voiceover audio...');
     const audioPaths = await generateAudioForScenes(script.scenes, jobId);
     checkCancelled();
 
@@ -118,22 +130,24 @@ async function processJob(jobId, rawText) {
     checkCancelled();
 
     // 5. Render video
-    jobs[jobId].progress = 'Rendering video (up to 6 minutes)...';
+    // CHANGE: No hard timeout here anymore. The render has its own per-frame
+    // timeout (30 s) in videoService.js. A legitimate 90-second video with
+    // complex scenes can genuinely take 4-8 minutes to render on a shared host.
+    setProgress('Rendering video — please wait, this takes 2–5 minutes...');
     await renderVideo(jobId, scenesWithAudio, isCancelled);
     checkCancelled();
 
     // 6. Done
-    clearTimeout(timeoutHandle);
+    const totalSeconds = Math.round((Date.now() - jobs[jobId].startedAt) / 1000);
     jobs[jobId] = {
       status: 'complete',
       title: script.title,
       videoUrl: `/videos/${jobId}/video.mp4`,
+      totalSeconds,
     };
-    console.log(`🎉 Job ${jobId} complete!`);
+    console.log(`🎉 Job ${jobId} complete in ${totalSeconds}s!`);
 
   } catch (err) {
-    clearTimeout(timeoutHandle);
-
     if (err.message === 'Cancelled by user' || err.message === 'Job cancelled by user') {
       console.log(`🛑 Job ${jobId} gracefully aborted.`);
     } else {
@@ -144,7 +158,7 @@ async function processJob(jobId, rawText) {
     }
   }
 
-  // Auto-cleanup: remove files and memory after 15 minutes
+  // Auto-cleanup: remove files and memory after 30 minutes
   setTimeout(async () => {
     try {
       if (await fs.pathExists(jobDir)) {
