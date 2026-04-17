@@ -3,6 +3,7 @@ const { renderMedia, selectComposition } = require('@remotion/renderer');
 const path = require('path');
 const fs = require('fs-extra');
 const chromium = require('@sparticuz/chromium');
+const mp3Duration = require('mp3-duration');
 
 const ENTRY_POINT = path.join(__dirname, '../remotion-src/index.ts');
 
@@ -22,17 +23,12 @@ async function getBundleUrl() {
 }
 
 /**
- * Estimate audio duration from an MP3 file's byte size.
- * Formula: bytes / (bitrate_kbps * 125) = seconds
- * ElevenLabs outputs ~128kbps MP3s, so we use 128 * 125 = 16000 bytes/sec.
- * This is an estimate — accurate within ~5% which is enough to set scene length.
+ * Accurately calculates the exact audio duration to prevent scenes from cutting off abruptly.
+ * Replaces the arbitrary 128kbps calculation which broke when we switched to Google TTS (32kbps).
  */
 async function estimateAudioDuration(filePath) {
   try {
-    const stats = await fs.stat(filePath);
-    const bytes = stats.size;
-    const bitrateKbps = 128; // ElevenLabs default
-    const durationSeconds = bytes / (bitrateKbps * 125);
+    const durationSeconds = await mp3Duration(filePath);
     return Math.ceil(durationSeconds * 10) / 10; // round up to 1 decimal
   } catch (err) {
     console.warn(`⚠️  Could not estimate audio duration for ${filePath}:`, err.message);
