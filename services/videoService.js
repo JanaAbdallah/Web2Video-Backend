@@ -1,3 +1,16 @@
+/**
+ * videoService.js
+ *
+ * Renders the final MP4 using Remotion.
+ *
+ * Hard constraints:
+ *  - Output resolution: 1280×720 (720p) — never lower, never higher
+ *  - x264 preset: ultrafast — fastest encode, negligible quality loss at 720p
+ *  - Concurrency: auto-detected from CPUs, capped at 8
+ *  - Total render target: ≤ 6 minutes (enforced by generate.js timeout)
+ *  - Video duration: enforced upstream by llmService (≤ 90s)
+ */
+
 const { bundle } = require('@remotion/bundler');
 const { renderMedia, selectComposition, makeCancelSignal } = require('@remotion/renderer');
 const path = require('path');
@@ -8,16 +21,15 @@ const os = require('os');
 
 const ENTRY_POINT = path.join(__dirname, '../remotion-src/index.ts');
 
-// ─── Cached singletons (computed once, reused forever) ────────────────────────
+// ─── Singleton cache ──────────────────────────────────────────────────────────
 
 let cachedBundleUrl = null;
-let cachedExecutablePath = null;   // executablePath() is slow (~200ms) — cache it
+let cachedExecutablePath = null;
 
-// ─── Warm-up: call this from server.js on boot ───────────────────────────────
+// ─── Warm-up ──────────────────────────────────────────────────────────────────
 
 async function warmUp() {
   try {
-    // Run both in parallel — shaves ~30s off the first real request
     [cachedBundleUrl, cachedExecutablePath] = await Promise.all([
       _buildBundle(),
       chromium.executablePath(),
@@ -48,7 +60,7 @@ async function getExecutablePath() {
   return cachedExecutablePath;
 }
 
-// ─── Audio duration helper ────────────────────────────────────────────────────
+// ─── Audio duration ───────────────────────────────────────────────────────────
 
 async function estimateAudioDuration(filePath) {
   try {
@@ -60,13 +72,13 @@ async function estimateAudioDuration(filePath) {
   }
 }
 
-// ─── Main render function ─────────────────────────────────────────────────────
+// ─── Main render ──────────────────────────────────────────────────────────────
 
 async function renderVideo(jobId, scenesWithAudio, checkCancelled) {
   const outputPath = path.join(__dirname, '../outputs', jobId, 'video.mp4');
   const fps = 24;
 
-  // ── 1. Measure all audio durations in parallel (was sequential before) ──────
+  // ── 1. Measure audio durations in parallel ───────────────────────────────
   console.log('🔍 Measuring audio durations...');
   const scenesWithDurations = await Promise.all(
     scenesWithAudio.map(async (scene, i) => {
@@ -74,20 +86,26 @@ async function renderVideo(jobId, scenesWithAudio, checkCancelled) {
       const localPath = path.join(__dirname, '../outputs', jobId, `scene-${i}.mp3`);
       const audioDuration = await estimateAudioDuration(localPath);
       if (audioDuration) {
-        console.log(`  Scene ${i + 1}: audio = ${audioDuration}s (LLM said ${scene.duration}s)`);
+        console.log(`  Scene ${i + 1}: audio = ${audioDuration}s`);
       }
       return { ...scene, audioDuration };
     })
   );
 
-  // ── 2. Compute total frames ──────────────────────────────────────────────────
+  // ── 2. Compute total frames ───────────────────────────────────────────────
   const totalDurationSeconds = scenesWithDurations.reduce((sum, scene) => {
-    const effective = scene.audioDuration ? scene.audioDuration + 0.5 : scene.duration;
+    // Add 0.3s buffer after each audio clip so it never gets cut off
+    const effective = scene.audioDuration ? scene.audioDuration + 0.3 : scene.duration;
     return sum + effective;
   }, 0);
-  const totalFrames = Math.round(totalDurationSeconds * fps);
 
-  // ── 3. Resolve bundle + chromium (from cache) ────────────────────────────────
+  // Hard cap: clip to 90 seconds worth of frames if somehow over
+  const cappedDuration = Math.min(totalDurationSeconds, 90);
+  const totalFrames = Math.round(cappedDuration * fps);
+
+  console.log(`  Total: ${cappedDuration.toFixed(1)}s → ${totalFrames} frames`);
+
+  // ── 3. Resolve bundle + chromium ─────────────────────────────────────────
   const [serveUrl, executablePath] = await Promise.all([
     getBundleUrl(),
     getExecutablePath(),
@@ -96,14 +114,16 @@ async function renderVideo(jobId, scenesWithAudio, checkCancelled) {
   const chromiumOptions = {
     args: [
       ...chromium.args,
-      '--disable-dev-shm-usage',   // avoids /dev/shm exhaustion in containers
+      '--disable-dev-shm-usage',
       '--no-sandbox',
       '--disable-setuid-sandbox',
+      '--disable-gpu',                  // headless doesn't need GPU
+      '--disable-software-rasterizer',
     ],
     headless: chromium.headless,
   };
 
-  // ── 4. Select composition ─────────────────────────────────────────────────────
+  // ── 4. Select composition ─────────────────────────────────────────────────
   const composition = await selectComposition({
     serveUrl,
     id: 'MainVideo',
@@ -112,42 +132,42 @@ async function renderVideo(jobId, scenesWithAudio, checkCancelled) {
     browserExecutable: executablePath,
   });
 
+  // Enforce 720p and computed duration regardless of Root.tsx defaults
   composition.durationInFrames = totalFrames;
   composition.fps = fps;
+  composition.width = 1280;   // 720p
+  composition.height = 720;   // 720p
 
-  // ── 5. Determine concurrency ──────────────────────────────────────────────────
-  // Use (CPUs - 1) so the OS stays responsive, floor at 2, cap at 8.
+  // ── 5. Concurrency: (CPUs - 1), floor 2, cap 8 ───────────────────────────
   const cpuCount = os.cpus().length;
   const concurrency = Math.min(Math.max(cpuCount - 1, 2), 8);
 
   console.log(
-    `🎬 Rendering ${totalFrames} frames (${totalDurationSeconds.toFixed(1)}s, ` +
-    `${scenesWithDurations.length} scenes) at ${fps} FPS with concurrency=${concurrency}...`
+    `🎬 Rendering ${totalFrames} frames at ${fps} FPS, 1280×720, ` +
+    `concurrency=${concurrency}, preset=ultrafast...`
   );
 
-  // ── 6. Set up cancellation ────────────────────────────────────────────────────
+  // ── 6. Cancellation ───────────────────────────────────────────────────────
   const { cancelSignal, cancel } = makeCancelSignal();
   const cancelPoller = setInterval(() => {
     if (checkCancelled?.()) {
-      console.log('\n🛑 Cancel signal fired — stopping Remotion renderer...');
+      console.log('\n🛑 Cancel signal fired — stopping renderer...');
       cancel();
       clearInterval(cancelPoller);
     }
   }, 500);
 
-  // ── 7. Render ─────────────────────────────────────────────────────────────────
+  // ── 7. Render ─────────────────────────────────────────────────────────────
   try {
     await renderMedia({
       composition,
       serveUrl,
       codec: 'h264',
-
-      // KEY OPTIMISATION 1: render multiple frames simultaneously
       concurrency,
 
-      // KEY OPTIMISATION 2: much faster x264 encoding with negligible quality loss at 720p
-      // 'veryfast' is ~3× faster than the default 'medium'; try 'ultrafast' if still too slow
-      x264Preset: 'veryfast',
+      // 'ultrafast' is the fastest x264 preset — ~5× faster than default 'medium'.
+      // At 720p the quality difference is imperceptible for a talking-head style video.
+      x264Preset: 'ultrafast',
 
       outputLocation: outputPath,
       inputProps: { scenes: scenesWithDurations },
