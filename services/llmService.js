@@ -8,57 +8,57 @@ async function generateScript(cleanedText) {
     messages: [
       {
         role: 'system',
-        content: `You are a text extraction tool. Given webpage content, you must extract the exact original sentences verbatim to be read aloud in a video. DO NOT explain, summarize, or rewrite the text conversationally. Just copy the most important consecutive sentences exactly as they are written in the source document and break them into scenes.
+        content: `You are a verbatim text splitter. Your ONLY job is to copy consecutive sentences from the provided text exactly as they appear — word for word — and split them into scenes for a video.
 
-STRICT RULE: You MUST quote explicitly from the provided text. Do NOT hallucinate, invent, or change any words.
+ABSOLUTE RULES:
+1. COPY ONLY. Do NOT rephrase, summarize, explain, or add any word that is not in the source text.
+2. Every scene's "text" field must be a direct, verbatim quote from the source document.
+3. Do NOT add introductions, transitions, or closing remarks.
+4. Do NOT hallucinate or invent any content.
 
-Return ONLY valid raw JSON — no markdown fences, no extra text, nothing else.
+Return ONLY valid raw JSON — no markdown fences, no extra text.
 Schema:
 {
-  "title": "Short video title (max 8 words)",
+  "title": "Short title extracted verbatim from the text (max 8 words)",
   "scenes": [
     {
       "scene": 1,
-      "text": "Narration text, max 40 words, clear and simple",
+      "text": "Verbatim sentence(s) from the document",
       "visual": "title",
       "duration": 5
     },
     {
       "scene": 2,
-      "text": "Narration text, max 40 words, clear and simple",
+      "text": "Verbatim sentence(s) from the document",
       "visual": "content",
       "duration": 8,
-      "topic": "Key Concept",
-      "emoji": "💡"
+      "topic": "Short label (max 4 words) describing this excerpt",
+      "emoji": "📄"
     }
   ]
 }
 
 Rules:
-- Scene 1 must have visual = "title" (it's the intro card)
-- All other scenes must have visual = "content" and MUST include a "topic" (max 4 words) and a relevant "emoji"
-- Each text should be between 20 and 40 words to be concise
-- IMPORTANT: Duration must be long enough for the text to be spoken at a natural pace.
-  Use this formula: duration = Math.ceil(wordCount / 2.2) + 2
-  Examples: 20 words = 11s, 40 words = 20s
-- Title scene duration: 5 seconds
-- Minimum content scene duration: 8 seconds
-- Do NOT use symbols like *, #, or bullet points in text
-- Make it educational, conversational, and thorough
-- CRITICAL RULE: DO NOT EXCEED 5 SCENES TOTAL. The final video must be strictly under 90 seconds. Extract only the absolute core concepts.`
+- Scene 1 must have visual = "title" — use the document title or first heading as its text.
+- All other scenes must have visual = "content" with a "topic" label and "emoji".
+- Each scene text: 20–40 words of consecutive verbatim sentences from the source.
+- Duration formula: Math.ceil(wordCount / 2.2) + 2  (e.g. 20 words → 11s, 40 words → 20s)
+- Title scene duration: 5 seconds. Minimum content scene duration: 8 seconds.
+- Do NOT use *, #, or bullet characters in "text" fields.
+- STRICT LIMIT: Maximum 5 scenes total.`
       },
       {
         role: 'user',
-        content: `Create a comprehensive video script covering ALL the key information in this document:\n\n${cleanedText}`
+        content: `Split this document into verbatim scenes. Quote sentences exactly as written:\n\n${cleanedText}`
       }
     ],
-    temperature: 0.6,
+    temperature: 0,      // zero temperature = deterministic, no creative drift
     max_tokens: 4000,
   });
 
   const raw = response.choices[0].message.content.trim();
 
-  // Safely extract JSON even if model adds extra text
+  // Safely extract JSON even if the model adds stray text
   const match = raw.match(/\{[\s\S]*\}/);
   if (!match) throw new Error('LLM returned invalid JSON: ' + raw.substring(0, 200));
 
@@ -68,13 +68,12 @@ Rules:
     throw new Error('LLM returned invalid script structure');
   }
 
-  // Safety net: enforce minimum durations based on word count
-  // so audio never gets cut off regardless of what the LLM returned
-  script.   scenes = script.scenes.map((scene, i) => {
-    if (i === 0) return { ...scene, duration: Math.max(scene.duration, 5) }; // title
+  // Safety net: enforce minimum durations so audio is never cut off
+  script.scenes = script.scenes.map((scene, i) => {
+    if (i === 0) return { ...scene, duration: Math.max(scene.duration ?? 5, 5) };
     const wordCount = scene.text.trim().split(/\s+/).length;
     const minDuration = Math.ceil(wordCount / 2.2) + 2;
-    return { ...scene, duration: Math.max(scene.duration, minDuration) };
+    return { ...scene, duration: Math.max(scene.duration ?? minDuration, minDuration) };
   });
 
   return script;
